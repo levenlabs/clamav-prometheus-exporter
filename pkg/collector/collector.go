@@ -28,7 +28,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-//Collector satisfies prometheus.Collector interface
+// Collector satisfies prometheus.Collector interface
 type Collector struct {
 	client      clamav.Client
 	up          *prometheus.Desc
@@ -45,7 +45,48 @@ type Collector struct {
 	databaseAge *prometheus.Desc
 }
 
-//New creates a Collector struct
+type VersionInfo struct {
+	clamav_version   string
+	database_version string
+	database_age     float64
+	versions_parsed  bool
+}
+
+var versionRegex = regexp.MustCompile(`ClamAV+\s([0-9.]*)\/?([0-9.]*)\/?(.*)`)
+
+func GetVersionInfo(version_string string) *VersionInfo {
+	versionInfo := VersionInfo{}
+	// remove newlines
+	version := strings.Replace(version_string, "\n", "", -1)
+
+	matches := versionRegex.FindAllStringSubmatch(string(version), -1)
+	strBuilddate := ""
+
+	// Parse version numbers
+	if len(matches) > 0 {
+		versionInfo.clamav_version = matches[0][1]
+		versionInfo.database_version = matches[0][2]
+		strBuilddate = matches[0][3]
+		versionInfo.versions_parsed = true
+	} else {
+		log.Error("Error parsing ClamAV Version Numbers")
+	}
+
+	// Parse string as date type
+	dateFmt := "Mon Jan 2 15:04:05 2006"
+	builddate, err := time.Parse(dateFmt, strBuilddate)
+
+	if err != nil {
+		log.Errorf("Error parsing ClamAV Database Date: %s", err)
+		versionInfo.database_age = math.NaN()
+	} else {
+		versionInfo.database_age = float64(time.Since(builddate).Seconds())
+	}
+
+	return &versionInfo
+}
+
+// New creates a Collector struct
 func New(client clamav.Client) *Collector {
 	return &Collector{
 		client:      client,
@@ -64,7 +105,7 @@ func New(client clamav.Client) *Collector {
 	}
 }
 
-//Describe satisfies prometheus.Collector.Describe
+// Describe satisfies prometheus.Collector.Describe
 func (collector *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.up
 	ch <- collector.threadsLive
@@ -80,7 +121,7 @@ func (collector *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.databaseAge
 }
 
-//Collect satisfies prometheus.Collector.Collect
+// Collect satisfies prometheus.Collector.Collect
 func (collector *Collector) Collect(ch chan<- prometheus.Metric) {
 	pong := collector.client.Dial(commands.PING)
 	if bytes.Equal(pong, []byte{'P', 'O', 'N', 'G', '\n'}) {
@@ -100,7 +141,7 @@ func (collector *Collector) Collect(ch chan<- prometheus.Metric) {
 	stats := collector.client.Dial(commands.STATS)
 	idle, err := regexp.MatchString("IDLE", string(stats))
 	if err != nil {
-		log.Errorf("error searching IDLE field in stats %s: %s", idle, err)
+		log.Errorf("error searching IDLE field in stats %t: %s", idle, err)
 		return
 	}
 	regex := regexp.MustCompile(`([0-9.]+|N/A)`)
@@ -129,26 +170,17 @@ func (collector *Collector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(collector.poolsTotal, prometheus.GaugeValue, float(matches[15][1])*1024)
 	}
 
-	version := collector.client.Dial(commands.VERSION)
-	regex = regexp.MustCompile(`((ClamAV)+\s([0-9.]*)/([0-9.]*))`)
-	matches = regex.FindAllStringSubmatch(string(version), -1)
-	if len(matches) > 0 {
-		ch <- prometheus.MustNewConstMetric(collector.buildInfo, prometheus.GaugeValue, 1, matches[0][3], matches[0][4])
+	versionInfo := GetVersionInfo(string(collector.client.Dial(commands.VERSION)))
+
+	if versionInfo.versions_parsed {
+		ch <- prometheus.MustNewConstMetric(
+			collector.buildInfo,
+			prometheus.GaugeValue,
+			1,
+			versionInfo.clamav_version,
+			versionInfo.database_version,
+		)
 	}
 
-	strBuilddate := strings.Split(string(version), "/")[2]
-	// Remove newline
-	strBuilddate = strings.Replace(strBuilddate, "\n", "", -1)
-
-	// Parse string as date type
-	dateFmt := "Mon Jan 2 15:04:05 2006"
-	builddate, err := time.Parse(dateFmt, strBuilddate)
-
-	if err != nil {
-		log.Error("Error parsing ClamAV date: ", err)
-		ch <- prometheus.MustNewConstMetric(collector.databaseAge, prometheus.GaugeValue, float64(time.Now().Unix()))
-		return
-	}
-
-	ch <- prometheus.MustNewConstMetric(collector.databaseAge, prometheus.GaugeValue, float64(time.Since(builddate).Seconds()))
+	ch <- prometheus.MustNewConstMetric(collector.databaseAge, prometheus.GaugeValue, versionInfo.database_age)
 }
