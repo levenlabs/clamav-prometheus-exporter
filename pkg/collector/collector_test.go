@@ -7,6 +7,25 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestGetStat(t *testing.T) {
+	matches := [][]string{{"998", "098"}, {"300", "sup"}, {"456", "123"}}
+
+	{ // In Bounds
+		stat := GetStat(matches, 2)
+		assert.Equal(t, 123., stat)
+	}
+
+	{ // Out of Bounds
+		stat := GetStat(matches, 4)
+		assert.True(t, math.IsNaN(stat))
+	}
+
+	{ // Not a Float
+		stat := GetStat(matches, 1)
+		assert.True(t, math.IsNaN(stat))
+	}
+}
+
 func TestGetVersionInfo(t *testing.T) {
 	var float_64 float64
 
