@@ -15,20 +15,19 @@ limitations under the License.
 package clamav
 
 import (
-	"fmt"
 	"github.com/r3kzi/clamav-prometheus-exporter/pkg/commands"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"net"
 )
 
-//Client corresponds to a ClamAV client
+// Client corresponds to a ClamAV client
 type Client struct {
 	address string
 	network string
 }
 
-//New create a new Client for ClamAV
+// New create a new Client for ClamAV
 func New(address, network string) *Client {
 	return &Client{
 		address: address,
@@ -45,7 +44,7 @@ func (c Client) Dial(command commands.Command) []byte {
 	}
 	defer conn.Close()
 
-	_, _ = conn.Write([]byte(fmt.Sprintf("%s", command)))
+	_, _ = conn.Write([]byte(command.String()))
 	resp, err := ioutil.ReadAll(conn)
 	if err != nil {
 		log.Errorf("error reading socket response for command %s: %s", command, err)
